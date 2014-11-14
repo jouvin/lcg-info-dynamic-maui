@@ -1,0 +1,68 @@
+Diagnosing Reservations
+ResID                      Type Par   StartTime     EndTime     Duration Node Task Proc
+-----                      ---- ---   ---------     -------     -------- ---- ---- ----
+sdj_1.0.0                  User X53   -00:03:31    INFINITY     INFINITY    1    1    8
+    Flags: STANDINGRES DEDICATEDRESOURCE BLOCK execute
+    ACL: RES==sdj_1.0= CLASS==dteam+:==eticsproject.eu+:==ops+:==sdj+:==vo.grif.fr+ 
+    CL:  RES==sdj_1.0 
+    Task Resources: PROCS: 8
+    Attributes (HostList='grid65.lal.in2p3.fr'   Priority=10)
+    Active PH: 0.13/0.47 (28.69%)
+    SRAttributes (TaskCount: 1  StartTime: 00:00:00  EndTime: 1:00:00:00  Days: ALL)
+WARNING:  reservation 'sdj_1.0.0' has 8 proc(s) allocated but 0 detected
+18063                       Job X53   -00:01:06  1:11:58:54   1:12:00:00    1    1    1
+    ACL: JOB==18063= 
+    CL:  JOB==18063 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18064                       Job X53   -00:00:56  1:11:59:04   1:12:00:00    1    1    1
+    ACL: JOB==18064= 
+    CL:  JOB==18064 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18065                       Job X53   -00:00:56  1:11:59:04   1:12:00:00    1    1    1
+    ACL: JOB==18065= 
+    CL:  JOB==18065 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18066                       Job X53   -00:00:56  1:11:59:04   1:12:00:00    1    1    1
+    ACL: JOB==18066= 
+    CL:  JOB==18066 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18067                       Job X53   -00:00:56  1:11:59:04   1:12:00:00    1    1    1
+    ACL: JOB==18067= 
+    CL:  JOB==18067 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18068                       Job X53   -00:00:44  1:11:59:16   1:12:00:00    1    1    1
+    ACL: JOB==18068= 
+    CL:  JOB==18068 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18069                       Job X53   -00:00:33  1:11:59:27   1:12:00:00    1    1    1
+    ACL: JOB==18069= 
+    CL:  JOB==18069 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18070                       Job X53   -00:00:22  1:11:59:38   1:12:00:00    1    1    1
+    ACL: JOB==18070= 
+    CL:  JOB==18070 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18071                       Job X53   -00:00:22  1:11:59:38   1:12:00:00    1    1    1
+    ACL: JOB==18071= 
+    CL:  JOB==18071 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18072                       Job X53   -00:00:22  1:11:59:38   1:12:00:00    1    1    1
+    ACL: JOB==18072= 
+    CL:  JOB==18072 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18073                       Job X53   -00:00:22  1:11:59:38   1:12:00:00    1    1    1
+    ACL: JOB==18073= 
+    CL:  JOB==18073 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18074                       Job X53   -00:00:11  1:11:59:49   1:12:00:00    1    1    1
+    ACL: JOB==18074= 
+    CL:  JOB==18074 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18075                       Job X53   -00:00:11  1:11:59:49   1:12:00:00    1    1    1
+    ACL: JOB==18075= 
+    CL:  JOB==18075 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18076                       Job X53   -00:00:11  1:11:59:49   1:12:00:00    1    1    1
+    ACL: JOB==18076= 
+    CL:  JOB==18076 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18077                       Job X53   -00:00:11  1:11:59:49   1:12:00:00    1    1    1
+    ACL: JOB==18077= 
+    CL:  JOB==18077 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18078                       Job X53   -00:00:11  1:11:59:49   1:12:00:00    1    1    1
+    ACL: JOB==18078= 
+    CL:  JOB==18078 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+18079                       Job X53  1:11:58:54  2:23:58:54   1:12:00:00    1    1    1
+    Flags: PREEMPTEE
+    ACL: JOB==18079= 
+    CL:  JOB==18079 USER==gri162 GROUP==vo.grif.fr CLASS==vo.grif.fr QOS==DEFAULT DURATION==1:12:00:00 PROC==1 
+    Attributes (Priority=10)
+
+Active Reserved Processors: 16
+
