@@ -99,7 +99,8 @@ parser.add_option('-s','--cluster-ldif', dest='cluster_ldif_file', default=None,
 parser.add_option('-H','--host','--server', dest='hostname', default=None, action='store', help="Host name of Torque/MAUI server")
 parser.add_option('-v', '--debug', dest='verbosity', action='count', default=0, help='Increase verbosity level for debugging (on stderr)')
 parser.add_option('--diagnose-output', dest='diag_output', action='store', default=None, help='File containing a diagnose -r output. Be sure it is up-to-date.')
-parser.add_option('--flavor', dest='ce_flavor', default='all', action='store', help="CE flavor (lcg or cream or all)")
+# Flavor is kept for backward compatibility but is ignored
+parser.add_option('--flavor', dest='ce_flavor', default='all', action='store', help="CE flavor (cream or all)")
 parser.add_option('--max-normal-slots', dest='max_normal_slots', action='store', type="int", default=None, help="Maximum number of normal slots")
 parser.add_option('--version', dest='version', action='store_true', default=False, help='Display various information about this script')
 options, args = parser.parse_args()
@@ -123,8 +124,8 @@ else:
     schedhost = os.popen('hostname -f').readline().strip('\n')
     debug (1,"No scheduler host specified. Using default (%s)" % (schedhost))
 
-if options.ce_flavor and not re.match('all|cream|lcg',options.ce_flavor):
-  abort_without_output("Invalid value for --flavor option (%s): must be 'all', 'cream' or 'lcg'." % (options.ce_flavor))
+if options.ce_flavor and not re.match('all|cream',options.ce_flavor):
+  abort_without_output("Invalid value for deprecated --flavor option (%s): must be 'all' or 'cream'." % (options.ce_flavor))
 
 # Initializations
 
@@ -143,16 +144,8 @@ if options.ce_ldif_file:
       
   # gets the dns containing the keyword GlueVOViewLocalID or GlueCEUniqueID
   # and put this dn in ce_dn_to_queue_g1 list.
-  # Regexp is not exactly the same for LCG and CREAM CE.
-  if options.ce_flavor == 'cream':
-    jobmanager_prefix = 'cream'
-    jobmanager_name = 'pbs'
-  elif options.ce_flavor == 'lcg':
-    jobmanager_prefix = 'jobmanager'
-    jobmanager_name = 'pbs|lcgpbs'
-  else:
-    jobmanager_prefix = 'jobmanager|cream'
-    jobmanager_name = 'pbs|lcgpbs'    
+  jobmanager_prefix = 'cream'
+  jobmanager_name = 'pbs'
   ceIDPattern = re.compile(r'^dn:\s+GlueCEUniqueID=[\w\-\.:]+/+(?:'+jobmanager_prefix+')-(?:'+jobmanager_name+')-(?P<queue>[\w\-\.]+),')
   for line in ce_ldif:
     matcher = ceIDPattern.match(line)
