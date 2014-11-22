@@ -94,14 +94,15 @@ stdrhdlr.setFormatter(fmt)
 
 # Initialize parser
 parser = OptionParser()
-parser.add_option('-l','--ce-ldif', dest='ce_ldif_file', action='store', default=None, help="LDIF file describing CE resources to update")
-parser.add_option('-s','--cluster-ldif', dest='cluster_ldif_file', default=None, action='store', help="LDIF file describing cluster resources to update")
+parser.add_option('--ce-ldif', dest='ce_ldif_file', action='store', default=None, help="LDIF file describing GLUE1 CE resources to update")
+parser.add_option('--cluster-ldif', dest='cluster_ldif_file', default=None, action='store', help="LDIF file describing GLUE1 cluster resources to update (DEPRECATED)")
 parser.add_option('-H','--host','--server', dest='hostname', default=None, action='store', help="Host name of Torque/MAUI server")
 parser.add_option('-v', '--debug', dest='verbosity', action='count', default=0, help='Increase verbosity level for debugging (on stderr)')
 parser.add_option('--diagnose-output', dest='diag_output', action='store', default=None, help='File containing a diagnose -r output. Be sure it is up-to-date.')
 # Flavor is kept for backward compatibility but is ignored
 parser.add_option('--flavor', dest='ce_flavor', default='all', action='store', help="CE flavor (cream or all)")
 parser.add_option('--max-normal-slots', dest='max_normal_slots', action='store', type="int", default=None, help="Maximum number of normal slots")
+parser.add_option('--share-ldif', dest='share_ldif_file', action='store', default=None, help="LDIF file describing GLUE2 share resources to update")
 parser.add_option('--version', dest='version', action='store_true', default=False, help='Display various information about this script')
 options, args = parser.parse_args()
 
@@ -113,9 +114,9 @@ if options.version:
   debug (0,__doc__)
   sys.exit(0)
 
-if not options.ce_ldif_file and not options.cluster_ldif_file:
+if not options.ce_ldif_file and not options.share_ldif_file and not options.cluster_ldif_file:
     parser.print_usage()
-    abort_without_output("Either option --ce-ldif or --cluster-ldif must be specified.")
+    abort_without_output("At least one of the options --ce-ldif, --share-ldif or --cluster-ldif must be specified.")
     
     
 if options.hostname:
@@ -129,35 +130,69 @@ if options.ce_flavor and not re.match('all|cream',options.ce_flavor):
 
 # Initializations
 
-ce_dn_to_queue_g1 = {}
+ce_dn_to_queue = {}               # GLUE1
+share_dn_to_queue = {}            # GLUE2
 subcluster_dn_list = []
 output = []
 queue_attrs= {}
 
-# Retrieve CE DNs from static LDIF file
-        
+# Retrieve GLUE1 CE DNs and GLUEE2 share DNs from static LDIF files
+# Assume that both files are equivalent and can contain both GLUE1 and GLUE2 DNs.
+
+ldif_files = []
 if options.ce_ldif_file:
+  ldif_files.append(options.ce_ldif_file)
+if options.share_ldif_file:
+  ldif_files.append(options.share_ldif_file)
+  
+if len(ldif_files) == 0:
+  debug (1,'No CE or share static LDIF file specified. Ignoring update of CE parameters')
+
+# found_xxx_num are for debugging purpose
+found_ce_num = 0
+found_share_num = 0
+
+for file in ldif_files:
   try:
-    ce_ldif = open(options.ce_ldif_file,'r')
+    static_ldif = open(file,'r')
   except IOError:
-    abort_without_output("Error opening config file " + options.ce_ldif_file)
+    abort_without_output("Error opening static LDIF file %s" % (file))
       
-  # gets the dns containing the keyword GlueVOViewLocalID or GlueCEUniqueID
-  # and put this dn in ce_dn_to_queue_g1 list.
   jobmanager_prefix = 'cream'
   jobmanager_name = 'pbs'
   ceIDPattern = re.compile(r'^dn:\s+GlueCEUniqueID=[\w\-\.:]+/+(?:'+jobmanager_prefix+')-(?:'+jobmanager_name+')-(?P<queue>[\w\-\.]+),')
-  for line in ce_ldif:
-    matcher = ceIDPattern.match(line)
-    if matcher:
-      ce_dn_to_queue_g1[line.strip('\n')] = matcher.group('queue')
-      # Add queue to queue list, parameters will be retrieved later
-      queue_attrs[matcher.group('queue')] = {}
-  ce_ldif.close()
-  debug (1,'Number of CE DN found in %s: %d' %(options.ce_ldif_file,len(ce_dn_to_queue_g1)))
-
-else:
-  debug (1,'No CE static LDIF file specified. Ignoring update of CE parameters')
+  shareIDPattern = re.compile(r'^dn:\s+GLUE2ShareID=.*GLUE2GroupID=resource,o=glue')
+  shareQueuePattern = re.compile(r'^GLUE2ComputingShareMappingQueue:\s+(?P<queue>[\w\-\.]+)')
+  share_dn = None
+  
+  for line in static_ldif:
+    if share_dn:
+      # Look for line defining the associated queue
+      if line == '\n':
+        logging.error("GLUE2ComputingShareMappingQueue not found for share %s" % (share_dn))        
+      matcher_g2 = shareQueuePattern.match(line)
+      if matcher_g2:
+        share_dn_to_queue[share_dn] = matcher_g2.group('queue')
+        # Add queue to queue list, parameters will be retrieved later
+        queue_attrs[matcher_g2.group('queue')] = None
+        share_dn = None         
+    else:
+      matcher_g2 = shareIDPattern.match(line)
+      if matcher_g2:
+        share_dn = line.strip('\n')
+      else:
+        matcher_g1 = ceIDPattern.match(line)
+        if matcher_g1:
+          ce_dn_to_queue[line.strip('\n')] = matcher_g1.group('queue')
+          # Add queue to queue list, parameters will be retrieved later
+          queue_attrs[matcher_g1.group('queue')] = None         
+  static_ldif.close()
+  debug (1,'Number of GLUE1 CE DNs found in %s: %d' %(file,len(ce_dn_to_queue)-found_ce_num))
+  debug (1,'Number of GLUE2 share DNs found in %s: %d' %(file,len(share_dn_to_queue)-found_share_num))
+  found_ce_num = len(ce_dn_to_queue)
+  found_share_num = len(share_dn_to_queue)
+debug (1,'Total number of GLUE1 CE DNs found: %d' %(found_ce_num))
+debug (1,'Total number of GLUE2 share DNs found: %d' %(found_share_num))
 
 
 # Retrieving subcluster DNs from static LDIF file
@@ -227,7 +262,7 @@ debug(1,'Number of available job slots (max for any queue with SDJ enabled): %d'
 
 
 # Build Glue information for each queue having an entry in the CE static LDIF file.
-# DN associated with a queue is in ce_dn_to_queue_g1, retrieved for CE static LDIF file.
+# DN associated with a queue is in ce_dn_to_queue, retrieved for CE static LDIF file.
 
 if options.ce_ldif_file:
   # First retrieve queue attributes for each queue exposed through a CE
@@ -291,8 +326,8 @@ if options.ce_ldif_file:
       queue_attrs[queue]['Status'] = 'Closed'
 
   # GLUE1 output
-  for dn in ce_dn_to_queue_g1:
-    queue = ce_dn_to_queue_g1[dn]
+  for dn in ce_dn_to_queue:
+    queue = ce_dn_to_queue[dn]
     output.append(dn)
     output.append('GlueCEInfoLRMSVersion: '+torqueParams['torqueVersion'])
     # For historical reasons, there are 2 attributes representing total number of CPUs
@@ -317,9 +352,34 @@ if options.ce_ldif_file:
     # End DN attributes by an empty line
     output.append('\n')
 
+  # GLUE2 output
+  # FIXME: properly define default values (instead of duplicating max values)
+  # FIXME: define GLUE2ComputingShareMaxWaitingJobs
+  # FIXME: define GLUE2ComputingShareMaxMainMemory
+  # FIXME: define GLUE2ComputingShareMaxSlotsPerJob
+  # FIXME: define GLUE2ComputingShareMaxVirtualMemory
+  # FIXME: define GLUE2ComputingShareUsedSlots
+  # FIXME: define GLUE2ComputingShareRunningJobs
+  for dn in share_dn_to_queue:
+    queue = share_dn_to_queue[dn]
+    output.append(dn)
+    output.append('GLUE2ComputingShareMaxTotalJobs: '+str(queue_attrs[queue]['TotalSlots']))
+    output.append('GLUE2ComputingShareFreeSlots: '+str(queue_attrs[queue]['freeJobSlots']))
+    if 'walltime' in queue_attrs[queue]['resources_max']:
+      output.append('GLUE2ComputingShareMaxWallTime: %d' % (convertHhMmSs(queue_attrs[queue]['resources_max']['walltime'][0])/60))
+      output.append('GLUE2ComputingShareDefaultWallTime: %d' % (convertHhMmSs(queue_attrs[queue]['resources_max']['walltime'][0])/60))
+    if 'MaxCPUTime' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
+      output.append('GLUE2ComputingShareDefaultCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
+    if 'max_running' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxRunningJobs: %s' % (queue_attrs[queue]['max_running'][0]))
+    output.append('GLUE2ComputingShareServingState: %s' % (queue_attrs[queue]['Status']))
+    # End DN attributes by an empty line
+    output.append('\n')
 
-# Update SubCluster logical CPUs
-# This part is maintained for backward compatibility but is not compliant
+
+# Update SubCluster logical CPUs if cluster_ldif_file has been specified.
+# REPRECATED: this part is maintained for backward compatibility but is not compliant
 # with the agreement that GlueSubClusterLogicalCPUs is a static value representing
 # the number of cores configured (and not active) in the cluster.
 # It is also not able to cope with multiple homogeneous subclusters in a cluster.
