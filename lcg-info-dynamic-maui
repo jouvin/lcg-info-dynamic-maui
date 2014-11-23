@@ -328,6 +328,10 @@ if options.ce_ldif_file:
   # GLUE1 output
   for dn in ce_dn_to_queue:
     queue = ce_dn_to_queue[dn]
+    if queue_attrs[queue] is None:
+      logging.error("Skipping GLUE1 GlueCE %s: matching queue (%s) attributes not retrieved" % (dn,queue))
+      debug(1,"Skipping GLUE1 GlueCE %s: matching queue (%s) attributes not retrieved" % (dn,queue))
+      continue
     output.append(dn)
     output.append('GlueCEInfoLRMSVersion: '+torqueParams['torqueVersion'])
     # For historical reasons, there are 2 attributes representing total number of CPUs
@@ -362,6 +366,10 @@ if options.ce_ldif_file:
   # FIXME: define GLUE2ComputingShareRunningJobs
   for dn in share_dn_to_queue:
     queue = share_dn_to_queue[dn]
+    if queue_attrs[queue] is None:
+      logging.error("Skipping GLUE2 share %s: matching queue (%s) attributes not retrieved" % (dn,queue))
+      debug(1,"Skipping GLUE2 share %s: matching queue (%s) attributes not retrieved" % (dn,queue))
+      continue
     output.append(dn)
     output.append('GLUE2ComputingShareMaxTotalJobs: '+str(queue_attrs[queue]['TotalSlots']))
     output.append('GLUE2ComputingShareFreeSlots: '+str(queue_attrs[queue]['freeJobSlots']))
