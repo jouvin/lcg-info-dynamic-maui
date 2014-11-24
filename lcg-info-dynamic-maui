@@ -26,6 +26,7 @@ except:
 
 
 # Initializations
+now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 verbosity = 0
 # Allow to define the max number of waiting job from the max number of running jobs allowed.
 # Can be modified by option --waiting-running-ratio.
@@ -401,6 +402,7 @@ if options.ce_ldif_file:
     output.append('GLUE2ComputingShareMaxWaitingJobs: %d' % (queue_attrs[queue]['MaxWaitingJobs']))
     output.append('GLUE2ComputingShareMaxTotalJobs: %d' % (queue_attrs[queue]['MaxTotalJobs']))
     output.append('GLUE2ComputingShareServingState: %s' % (queue_attrs[queue]['Status']))
+    output.append('GLUE2EntityCreationTime: %s\n' % now)
     # End DN attributes by an empty line
     output.append('\n')
 
