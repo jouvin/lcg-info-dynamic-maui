@@ -6,7 +6,7 @@ This plugin is an alternative to the old PBS-based GIP plugin. It takes into acc
 specific MAUI features like standing reservations.
 """
 
-__version__ = "2.1.0-1"
+__version__ = "2.1.0-3"
 __author__  = "Michel Jouvin <jouvin@lal.in2p3.fr>, Cedric Duprilot <duprilot@lal.in2p3.fr>"
 
 
@@ -27,6 +27,9 @@ except:
 
 # Initializations
 verbosity = 0
+# Allow to define the max number of waiting job from the max number of running jobs allowed.
+# Can be modified by option --waiting-running-ratio.
+max_waiting_running_def_ratio = 2
 
 
 # convert triplet hours:minutes:seconds into seconds
@@ -104,6 +107,8 @@ parser.add_option('--flavor', dest='ce_flavor', default='all', action='store', h
 parser.add_option('--max-normal-slots', dest='max_normal_slots', action='store', type="int", default=None, help="Maximum number of normal slots")
 parser.add_option('--share-ldif', dest='share_ldif_file', action='store', default=None, help="LDIF file describing GLUE2 share resources to update")
 parser.add_option('--version', dest='version', action='store_true', default=False, help='Display various information about this script')
+parser.add_option('--waiting-running-ratio', dest='max_waiting_running_ratio', action='store', type="int", default=max_waiting_running_def_ratio, \
+                                             help="Ratio between max number of waiting jobs and max number of running jobs (D: %d)" % (max_waiting_running_def_ratio))
 options, args = parser.parse_args()
 
 if options.verbosity:
@@ -325,6 +330,22 @@ if options.ce_ldif_file:
     else:
       queue_attrs[queue]['Status'] = 'Closed'
 
+    # Compute max running jobs, max waiting jobs and max total jobs based on queue configuration
+    if 'max_running' in queue_attrs[queue]:
+      queue_attrs[queue]['MaxRunningJobs'] = queue_attrs[queue]['max_running'][0]
+    else:
+      queue_attrs[queue]['MaxRunningJobs'] = queue_attrs[queue]['TotalSlots']
+    if 'max_queuable' in queue_attrs[queue]:
+      queue_attrs[queue]['MaxWaitingJobs'] = queue_attrs[queue]['max_queuable'][0] - queue_attrs[queue]['MaxRunningJobs']
+      if queue_attrs[queue]['MaxWaitingJobs'] < 0:
+        debug(1,"Queue %s: negative MaxWaitingJobs (%d) reset to 0" % (queue,queue_attrs[queue]['MaxWaitingJobs']))
+        queue_attrs[queue]['MaxWaitingJobs'] = 0
+      queue_attrs[queue]['MaxTotalJobs'] = queue_attrs[queue]['max_queuable'][0]
+    else:
+      queue_attrs[queue]['MaxWaitingJobs'] = options.max_waiting_running_ratio * queue_attrs[queue]['MaxRunningJobs']
+      queue_attrs[queue]['MaxTotalJobs'] = queue_attrs[queue]['MaxRunningJobs'] + queue_attrs[queue]['MaxWaitingJobs']
+
+
   # GLUE1 output
   for dn in ce_dn_to_queue:
     queue = ce_dn_to_queue[dn]
@@ -358,12 +379,10 @@ if options.ce_ldif_file:
 
   # GLUE2 output
   # FIXME: properly define default values (instead of duplicating max values)
-  # FIXME: define GLUE2ComputingShareMaxWaitingJobs
   # FIXME: define GLUE2ComputingShareMaxMainMemory
   # FIXME: define GLUE2ComputingShareMaxSlotsPerJob
   # FIXME: define GLUE2ComputingShareMaxVirtualMemory
   # FIXME: define GLUE2ComputingShareUsedSlots
-  # FIXME: define GLUE2ComputingShareRunningJobs
   for dn in share_dn_to_queue:
     queue = share_dn_to_queue[dn]
     if queue_attrs[queue] is None:
@@ -371,7 +390,6 @@ if options.ce_ldif_file:
       debug(1,"Skipping GLUE2 share %s: matching queue (%s) attributes not retrieved" % (dn,queue))
       continue
     output.append(dn)
-    output.append('GLUE2ComputingShareMaxTotalJobs: '+str(queue_attrs[queue]['TotalSlots']))
     output.append('GLUE2ComputingShareFreeSlots: '+str(queue_attrs[queue]['freeJobSlots']))
     if 'walltime' in queue_attrs[queue]['resources_max']:
       output.append('GLUE2ComputingShareMaxWallTime: %d' % (convertHhMmSs(queue_attrs[queue]['resources_max']['walltime'][0])/60))
@@ -379,8 +397,9 @@ if options.ce_ldif_file:
     if 'MaxCPUTime' in queue_attrs[queue]:
       output.append('GLUE2ComputingShareMaxCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
       output.append('GLUE2ComputingShareDefaultCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
-    if 'max_running' in queue_attrs[queue]:
-      output.append('GLUE2ComputingShareMaxRunningJobs: %s' % (queue_attrs[queue]['max_running'][0]))
+    output.append('GLUE2ComputingShareMaxRunningJobs: %d' % (queue_attrs[queue]['MaxRunningJobs']))
+    output.append('GLUE2ComputingShareMaxWaitingJobs: %d' % (queue_attrs[queue]['MaxWaitingJobs']))
+    output.append('GLUE2ComputingShareMaxTotalJobs: %d' % (queue_attrs[queue]['MaxTotalJobs']))
     output.append('GLUE2ComputingShareServingState: %s' % (queue_attrs[queue]['Status']))
     # End DN attributes by an empty line
     output.append('\n')
