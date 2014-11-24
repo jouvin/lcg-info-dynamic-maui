@@ -28,7 +28,6 @@ except:
 
 # Initializations
 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-queue_def_values = {}
 verbosity = 0
 # Allow to define the max number of waiting job from the max number of running jobs allowed.
 # Can be modified by option --waiting-running-ratio.
@@ -47,6 +46,36 @@ def convertHhMmSs(timeStr):
   elif timeStr != "-":
     time = 0
   return int(time)
+
+# Parse file ccontaining default values for some queue attributes.
+# Return values as integer if they can be interpreted as a number.
+def parseDefaultsFile(filename):
+  try:
+    file = open(filename,'r')
+  except IOError:
+    abort_without_output("Error opening defaults file (%s)" % (filename))
+    
+  commented_line_pattern = re.compile(r'\s*#')
+  default_value_pattern = re.compile(r'^\s*(?P<kword>\w+)\s*=\s*(?P<value>\S*)')
+
+  defaults = {}
+  i = 0
+  for line in file:
+    i = i + 1
+    if commented_line_pattern.match(line):
+      continue
+    matcher = default_value_pattern.match(line)
+    if not matcher:
+      logging.error("File %s: line %d invalid (%s)" % (filename,i,line.strip()))
+      debug(1,"File %s: line %d invalid (%s)" % (filename,i,line.strip()))
+      continue
+    try:
+      defaults[matcher.group('kword')] = int(matcher.group('value'))
+    except ValueError:
+      defaults[matcher.group('kword')] = matcher.group('value')
+    
+  return defaults
+    
 
 # note: this class works around the bug in the python logging
 # package fixed in patch #642974.  If the version of python-logging
@@ -102,6 +131,7 @@ stdrhdlr.setFormatter(fmt)
 parser = OptionParser()
 parser.add_option('--ce-ldif', dest='ce_ldif_file', action='store', default=None, help="LDIF file describing GLUE1 CE resources to update")
 parser.add_option('--cluster-ldif', dest='cluster_ldif_file', default=None, action='store', help="LDIF file describing GLUE1 cluster resources to update (DEPRECATED)")
+parser.add_option('--defaults', dest='defaults_file', default=None, action='store', help="File containing queue parameter defaults to use when not explicitly set")
 parser.add_option('-H','--host','--server', dest='hostname', default=None, action='store', help="Host name of Torque/MAUI server")
 parser.add_option('-v', '--debug', dest='verbosity', action='count', default=0, help='Increase verbosity level for debugging (on stderr)')
 parser.add_option('--diagnose-output', dest='diag_output', action='store', default=None, help='File containing a diagnose -r output. Be sure it is up-to-date.')
@@ -143,6 +173,13 @@ share_dn_to_queue = {}            # GLUE2
 subcluster_dn_list = []
 output = []
 queue_attrs= {}
+
+# Retrieve parameter defaults from file if --defaults specified
+
+if options.defaults_file:
+  queue_def_values = parseDefaultsFile(options.defaults_file)
+else:
+  queue_def_values = {}
 
 # Retrieve GLUE1 CE DNs and GLUEE2 share DNs from static LDIF files
 # Assume that both files are equivalent and can contain both GLUE1 and GLUE2 DNs.
