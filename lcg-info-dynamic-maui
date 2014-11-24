@@ -6,7 +6,7 @@ This plugin is an alternative to the old PBS-based GIP plugin. It takes into acc
 specific MAUI features like standing reservations.
 """
 
-__version__ = "2.1.0-3"
+__version__ = "2.2.0-1dev"
 __author__  = "Michel Jouvin <jouvin@lal.in2p3.fr>, Cedric Duprilot <duprilot@lal.in2p3.fr>"
 
 
@@ -17,6 +17,7 @@ import getopt
 import string
 import os
 import re
+import time
 from optparse import OptionParser
 try:
   from TorqueMauiConfParser import *
@@ -27,6 +28,7 @@ except:
 
 # Initializations
 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+queue_def_values = {}
 verbosity = 0
 # Allow to define the max number of waiting job from the max number of running jobs allowed.
 # Can be modified by option --waiting-running-ratio.
@@ -292,44 +294,34 @@ if options.ce_ldif_file:
       debug(1,'Number of free slots in queue (%d) > total number of free slots. Reset to %d.' % (queue_attrs[queue]['freeJobSlots'],torqueParams['totalFreeSlots']))
       queue_attrs[queue]['freeJobSlots'] = torqueParams['totalFreeSlots']
       
-    # Get/normalize the value of the following attributes:
-    # GlueCEPolicyMaxCPUTime, GlueCEPolicyMaxTotalJobs, GlueCEPolicyPriority, 
-    # GlueCEPolicyMaxRunningJobs, GlueCEPolicyMaxWallClockTime, GlueCEStateStatus
-
     queueEnabled = False
     queueStarted = False
     maxCPUTime = 0
     maxPCPUTime = 0
+    defaultCPUTime = 0
+    defaultPCPUTime = 0
     
     # For MaxCPUTime, use Torque cput if pcput (per process limit) is not set or > cput.
     # Else use pcput (real limit for single process jobs, not very meaningful anyway for MPI jobs).
     # If none are defined, keep the default value (don't redefine here).
+
     if 'cput' in queue_attrs[queue]['resources_max']:
-    	maxCPUTime = convertHhMmSs(queue_attrs[queue]['resources_max']['cput'][0])
+      maxCPUTime = convertHhMmSs(queue_attrs[queue]['resources_max']['cput'][0])
     if 'pcput' in queue_attrs[queue]['resources_max']:
-    	maxPCPUTime = convertHhMmSs(queue_attrs[queue]['resources_max']['pcput'][0])
+      maxPCPUTime = convertHhMmSs(queue_attrs[queue]['resources_max']['pcput'][0])
     if (maxCPUTime > 0) and ((maxPCPUTime == 0) or (maxCPUTime < maxPCPUTime)):
       queue_attrs[queue]['MaxCPUTime'] = maxCPUTime
     elif maxPCPUTime > 0:
       queue_attrs[queue]['MaxCPUTime'] = maxPCPUTime
 
-    # Set GlueCEStateStatus according to 'enabled' and 'started'
-    if 'enabled' in queue_attrs[queue] and (queue_attrs[queue]['enabled'][0].lower() == 'true'):
-    	queueEnabled = True
-    else:
-    	queueEnabled = False
-    if 'started' in queue_attrs[queue] and (queue_attrs[queue]['started'][0].lower() == 'true'):
-    	queueStarted = True
-    else:
-    	queueStarted = False
-    if queueEnabled and queueStarted:
-      queue_attrs[queue]['Status'] = 'Production'
-    elif queueEnabled:
-      queue_attrs[queue]['Status'] = 'Queueing'
-    elif queueStarted:
-      queue_attrs[queue]['Status'] = 'Draining'
-    else:
-      queue_attrs[queue]['Status'] = 'Closed'
+    if 'cput' in queue_attrs[queue]['resources_default']:
+      defaultCPUTime = convertHhMmSs(queue_attrs[queue]['resources_default']['cput'][0])
+    if 'pcput' in queue_attrs[queue]['resources_default']:
+      defaultPCPUTime = convertHhMmSs(queue_attrs[queue]['resources_default']['pcput'][0])
+    if (defaultCPUTime > 0) and ((defaultPCPUTime == 0) or (defaultCPUTime < defaultPCPUTime)):
+      queue_attrs[queue]['defaultCPUTime'] = defaultCPUTime
+    elif defaultPCPUTime > 0:
+      queue_attrs[queue]['defaultCPUTime'] = defaultPCPUTime
 
     # Compute max running jobs, max waiting jobs and max total jobs based on queue configuration
     if 'max_running' in queue_attrs[queue]:
@@ -346,8 +338,63 @@ if options.ce_ldif_file:
       queue_attrs[queue]['MaxWaitingJobs'] = options.max_waiting_running_ratio * queue_attrs[queue]['MaxRunningJobs']
       queue_attrs[queue]['MaxTotalJobs'] = queue_attrs[queue]['MaxRunningJobs'] + queue_attrs[queue]['MaxWaitingJobs']
 
+    # Define various other attributes based on queueu configuration or default values
+    if 'Priority' in queue_attrs[queue]:
+      queue_attrs[queue]['PolicyPriority'] = queue_attrs[queue]['Priority'][0]
+
+    if 'walltime' in queue_attrs[queue]['resources_default']:
+      queue_attrs[queue]['DefaultWallTime'] = queue_attrs[queue]['resources_default']['walltime'][0]
+    if 'walltime' in queue_attrs[queue]['resources_max']:
+      queue_attrs[queue]['MaxWallTime'] = queue_attrs[queue]['resources_max']['walltime'][0]
+
+    if 'mem' in queue_attrs[queue]['resources_default']:
+      queue_attrs[queue]['DefaultPhysMem'] = queue_attrs[queue]['resources_default']['mem'][0]
+    elif 'DefaultPhysicalMemory' in queue_def_values:
+      queue_attrs[queue]['DefaultPhysMem'] = queue_def_values['DefaultPhysicalMemory']
+    if 'mem' in queue_attrs[queue]['resources_max']:
+      queue_attrs[queue]['MaxPhysMem'] = queue_attrs[queue]['resources_max']['mem'][0]
+    elif 'MaxPhysicalMemory' in queue_def_values:
+      queue_attrs[queue]['MaxPhysMem'] = queue_def_values['MaxPhysicalMemory']
+
+    if 'vmem' in queue_attrs[queue]['resources_default']:
+      queue_attrs[queue]['DefaultVirtMem'] = queue_attrs[queue]['resources_default']['vmem'][0]
+    elif 'DefaultVirtualMemory' in queue_def_values:
+      queue_attrs[queue]['DefaultVirtMem'] = queue_def_values['DefaultVirtualMemory']
+    if 'vmem' in queue_attrs[queue]['resources_max']:
+      queue_attrs[queue]['MaxVirtMem'] = queue_attrs[queue]['resources_max']['vmem'][0]
+    elif 'MaxVirtualMemory' in queue_def_values:
+      queue_attrs[queue]['MaxVirtMem'] = queue_def_values['MaxVirtualMemory']
+
+    if 'procct' in queue_attrs[queue]['resources_default']:
+      queue_attrs[queue]['DefaultProcPerJob'] = queue_attrs[queue]['resources_default']['procct'][0]
+    elif 'DefaultProcessorPerJob' in queue_def_values:
+      queue_attrs[queue]['DefaultProcPerJob'] = queue_def_values['DefaultProcessorPerJob']
+    if 'procct' in queue_attrs[queue]['resources_max']:
+      queue_attrs[queue]['MaxProcPerJob'] = queue_attrs[queue]['resources_max']['procct'][0]
+    elif 'MaxProcessorPerJob' in queue_def_values:
+      queue_attrs[queue]['MaxProcPerJob'] = queue_def_values['MaxProcessorPerJob']
+    
+    # Define status according to 'enabled' and 'started'
+    if 'enabled' in queue_attrs[queue] and (queue_attrs[queue]['enabled'][0].lower() == 'true'):
+      queueEnabled = True
+    else:
+      queueEnabled = False
+    if 'started' in queue_attrs[queue] and (queue_attrs[queue]['started'][0].lower() == 'true'):
+      queueStarted = True
+    else:
+      queueStarted = False
+    if queueEnabled and queueStarted:
+      queue_attrs[queue]['Status'] = 'Production'
+    elif queueEnabled:
+      queue_attrs[queue]['Status'] = 'Queueing'
+    elif queueStarted:
+      queue_attrs[queue]['Status'] = 'Draining'
+    else:
+      queue_attrs[queue]['Status'] = 'Closed'
+
 
   # GLUE1 output
+
   for dn in ce_dn_to_queue:
     queue = ce_dn_to_queue[dn]
     if queue_attrs[queue] is None:
@@ -363,15 +410,15 @@ if options.ce_ldif_file:
     output.append('GlueCEStateFreeCPUs: '+str(queue_attrs[queue]['freeJobSlots']))
     output.append('GlueCEStateFreeJobSlots: '+str(queue_attrs[queue]['freeJobSlots']))
     if 'max_queuable' in queue_attrs[queue]:
-      output.append('GlueCEPolicyMaxTotalJobs: %s' % (queue_attrs[queue]['max_queuable'][0]))
+      output.append('GlueCEPolicyMaxTotalJobs: %s' % (queue_attrs[queue]['MaxTotalJobs']))
     if 'Priority' in queue_attrs[queue]:
-      output.append('GlueCEPolicyPriority: %s' % (queue_attrs[queue]['Priority'][0]))
+      output.append('GlueCEPolicyPriority: %s' % (queue_attrs[queue]['PolicyPriority']))
     if 'max_running' in queue_attrs[queue]:
-      output.append('GlueCEPolicyMaxRunningJobs: %s' % (queue_attrs[queue]['max_running'][0]))
+      output.append('GlueCEPolicyMaxRunningJobs: %s' % (queue_attrs[queue]['MaxRunningJobs']))
     else:
       output.append('GlueCEPolicyMaxRunningJobs: %s' % torqueParams['normalJobSlots'])
     if 'walltime' in queue_attrs[queue]['resources_max']:
-      output.append('GlueCEPolicyMaxWallClockTime: %d' % (convertHhMmSs(queue_attrs[queue]['resources_max']['walltime'][0])/60))
+      output.append('GlueCEPolicyMaxWallClockTime: %d' % (convertHhMmSs(queue_attrs[queue]['MaxWallTime'])/60))
     if 'MaxCPUTime' in queue_attrs[queue]:
       output.append('GlueCEPolicyMaxCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
     output.append('GlueCEStateStatus: %s' % (queue_attrs[queue]['Status']))
@@ -379,11 +426,7 @@ if options.ce_ldif_file:
     output.append('\n')
 
   # GLUE2 output
-  # FIXME: properly define default values (instead of duplicating max values)
-  # FIXME: define GLUE2ComputingShareMaxMainMemory
-  # FIXME: define GLUE2ComputingShareMaxSlotsPerJob
-  # FIXME: define GLUE2ComputingShareMaxVirtualMemory
-  # FIXME: define GLUE2ComputingShareUsedSlots
+
   for dn in share_dn_to_queue:
     queue = share_dn_to_queue[dn]
     if queue_attrs[queue] is None:
@@ -391,18 +434,26 @@ if options.ce_ldif_file:
       debug(1,"Skipping GLUE2 share %s: matching queue (%s) attributes not retrieved" % (dn,queue))
       continue
     output.append(dn)
-    output.append('GLUE2ComputingShareFreeSlots: '+str(queue_attrs[queue]['freeJobSlots']))
-    if 'walltime' in queue_attrs[queue]['resources_max']:
-      output.append('GLUE2ComputingShareMaxWallTime: %d' % (convertHhMmSs(queue_attrs[queue]['resources_max']['walltime'][0])/60))
-      output.append('GLUE2ComputingShareDefaultWallTime: %d' % (convertHhMmSs(queue_attrs[queue]['resources_max']['walltime'][0])/60))
+    output.append('GLUE2ComputingShareFreeSlots: %s' % queue_attrs[queue]['freeJobSlots'])
+    output.append('GLUE2ComputingShareMaxRunningJobs: %d' % queue_attrs[queue]['MaxRunningJobs'])
+    output.append('GLUE2ComputingShareMaxWaitingJobs: %d' % queue_attrs[queue]['MaxWaitingJobs'])
+    output.append('GLUE2ComputingShareMaxTotalJobs: %d' % queue_attrs[queue]['MaxTotalJobs'])
+    output.append('GLUE2ComputingShareServingState: %s' % queue_attrs[queue]['Status'])
+    output.append('GLUE2EntityCreationTime: %s' % now)
+    if 'MaxWallTime' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxWallTime: %d' % (convertHhMmSs(queue_attrs[queue]['MaxWallTime'])/60))
+    if 'DefaultWallTime' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareDefaultWallTime: %d' % (convertHhMmSs(queue_attrs[queue]['DefaultWallTime'])/60))
     if 'MaxCPUTime' in queue_attrs[queue]:
       output.append('GLUE2ComputingShareMaxCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
+    if 'DefaultCPUTime' in queue_attrs[queue]:
       output.append('GLUE2ComputingShareDefaultCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
-    output.append('GLUE2ComputingShareMaxRunningJobs: %d' % (queue_attrs[queue]['MaxRunningJobs']))
-    output.append('GLUE2ComputingShareMaxWaitingJobs: %d' % (queue_attrs[queue]['MaxWaitingJobs']))
-    output.append('GLUE2ComputingShareMaxTotalJobs: %d' % (queue_attrs[queue]['MaxTotalJobs']))
-    output.append('GLUE2ComputingShareServingState: %s' % (queue_attrs[queue]['Status']))
-    output.append('GLUE2EntityCreationTime: %s\n' % now)
+    if 'MaxProcPerJob' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxSlotsPerJob: %d' % queue_attrs[queue]['MaxProcPerJob'])
+    if 'MaxPhysMem' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxMainMemory: %d' % queue_attrs[queue]['MaxPhysMem'])
+    if 'MaxVirtMem' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxVirtualMemory: %d' % queue_attrs[queue]['MaxVirtMem'])
     # End DN attributes by an empty line
     output.append('\n')
 
