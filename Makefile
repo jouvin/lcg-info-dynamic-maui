@@ -1,6 +1,6 @@
 PRODUCT=lcg-info-dynamic-maui
-VERSION=2.1.0
-RELEASE=3
+VERSION=2.2.0
+RELEASE=1
 
 TAR=/bin/tar
 
