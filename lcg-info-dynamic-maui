@@ -49,6 +49,7 @@ def convertHhMmSs(timeStr):
 
 # Parse file ccontaining default values for some queue attributes.
 # Return values as integer if they can be interpreted as a number.
+# FIXME: use a real parser like ConfigParser
 def parseDefaultsFile(filename):
   try:
     file = open(filename,'r')
@@ -62,6 +63,8 @@ def parseDefaultsFile(filename):
   i = 0
   for line in file:
     i = i + 1
+    if not line.strip():
+      continue
     if commented_line_pattern.match(line):
       continue
     matcher = default_value_pattern.match(line)
