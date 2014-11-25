@@ -484,6 +484,8 @@ if options.ce_ldif_file:
     if 'MaxCPUTime' in queue_attrs[queue]:
       output.append('GLUE2ComputingShareMaxCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
     if 'DefaultCPUTime' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareDefaultCPUTime: %d' % (queue_attrs[queue]['DefaultCPUTime']/60))
+    elif 'MaxCPUTime' in queue_attrs[queue]:
       output.append('GLUE2ComputingShareDefaultCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
     if 'MaxProcsPerJob' in queue_attrs[queue]:
       output.append('GLUE2ComputingShareMaxSlotsPerJob: %d' % queue_attrs[queue]['MaxProcsPerJob'])
