@@ -403,13 +403,13 @@ if options.ce_ldif_file:
       queue_attrs[queue]['MaxVirtMem'] = queue_def_values['MaxVirtualMemory']
 
     if 'procct' in queue_attrs[queue]['resources_default']:
-      queue_attrs[queue]['DefaultProcPerJob'] = queue_attrs[queue]['resources_default']['procct'][0]
-    elif 'DefaultProcessorPerJob' in queue_def_values:
-      queue_attrs[queue]['DefaultProcPerJob'] = queue_def_values['DefaultProcessorPerJob']
+      queue_attrs[queue]['DefaultProcsPerJob'] = queue_attrs[queue]['resources_default']['procct'][0]
+    elif 'DefaultProcessorsPerJob' in queue_def_values:
+      queue_attrs[queue]['DefaultProcsPerJob'] = queue_def_values['DefaultProcessorsPerJob']
     if 'procct' in queue_attrs[queue]['resources_max']:
-      queue_attrs[queue]['MaxProcPerJob'] = queue_attrs[queue]['resources_max']['procct'][0]
-    elif 'MaxProcessorPerJob' in queue_def_values:
-      queue_attrs[queue]['MaxProcPerJob'] = queue_def_values['MaxProcessorPerJob']
+      queue_attrs[queue]['MaxProcsPerJob'] = queue_attrs[queue]['resources_max']['procct'][0]
+    elif 'MaxProcessorsPerJob' in queue_def_values:
+      queue_attrs[queue]['MaxProcsPerJob'] = queue_def_values['MaxProcessorsPerJob']
     
     # Define status according to 'enabled' and 'started'
     if 'enabled' in queue_attrs[queue] and (queue_attrs[queue]['enabled'][0].lower() == 'true'):
@@ -485,8 +485,8 @@ if options.ce_ldif_file:
       output.append('GLUE2ComputingShareMaxCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
     if 'DefaultCPUTime' in queue_attrs[queue]:
       output.append('GLUE2ComputingShareDefaultCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
-    if 'MaxProcPerJob' in queue_attrs[queue]:
-      output.append('GLUE2ComputingShareMaxSlotsPerJob: %d' % queue_attrs[queue]['MaxProcPerJob'])
+    if 'MaxProcsPerJob' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxSlotsPerJob: %d' % queue_attrs[queue]['MaxProcsPerJob'])
     if 'MaxPhysMem' in queue_attrs[queue]:
       output.append('GLUE2ComputingShareMaxMainMemory: %d' % queue_attrs[queue]['MaxPhysMem'])
     if 'MaxVirtMem' in queue_attrs[queue]:
