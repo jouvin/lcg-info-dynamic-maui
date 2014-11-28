@@ -322,6 +322,7 @@ if options.ce_ldif_file:
       logging.error("Queue '%s' doesn't exist" % (queue))
       debug(1,"Queue '%s' doesn't exist" % (queue))
       continue
+    debug(1,"Queue %s attributes: %s" % (queue,queue_attrs[queue]))
 
     # Compute total/free CPUs (slots)
     queue_attrs[queue]['SDJSlots'] = torqueMauiConf.getQueueSDJSlots(queue)    
