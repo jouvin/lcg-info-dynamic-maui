@@ -4,7 +4,7 @@ python utilities for querying Torque/MAUI configuration and statistics
 Rely on pbs_python module (https://subtrac.sara.nl/oss/pbs_python) to access Torque configuration.
 """
 
-__version__ = "2.0.0-3"
+__version__ = "2.1.0-2"
 __author__  = "Michel Jouvin <jouvin@lal.in2p3.fr>, Cedric Duprilot <duprilot@lal.in2p3.fr>"
 
 
@@ -149,7 +149,8 @@ class TorqueMauiConfParser:
             # is not greater than the number of procs for the active nodes in the SR.
             self.__debug(3,'Hostlist=>>>%s<<<' % (matcher.group('hostlist')))
             self.SRList[resid]['hostlist'] = []
-            for node in matcher.group('hostlist'):
+            for node in matcher.group('hostlist').split(','):
+              node = node.strip()
               if node in self.activeNodes:
                 self.SRList[resid]['hostlist'].append(node)
               else:

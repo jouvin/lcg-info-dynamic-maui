@@ -6,7 +6,7 @@ This plugin is an alternative to the old PBS-based GIP plugin. It takes into acc
 specific MAUI features like standing reservations.
 """
 
-__version__ = "2.0.3-2"
+__version__ = "2.2.0-2"
 __author__  = "Michel Jouvin <jouvin@lal.in2p3.fr>, Cedric Duprilot <duprilot@lal.in2p3.fr>"
 
 
@@ -17,6 +17,7 @@ import getopt
 import string
 import os
 import re
+import time
 from optparse import OptionParser
 try:
   from TorqueMauiConfParser import *
@@ -26,7 +27,11 @@ except:
 
 
 # Initializations
+now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 verbosity = 0
+# Allow to define the max number of waiting job from the max number of running jobs allowed.
+# Can be modified by option --waiting-running-ratio.
+max_waiting_running_def_ratio = 2
 
 
 # convert triplet hours:minutes:seconds into seconds
@@ -41,6 +46,39 @@ def convertHhMmSs(timeStr):
   elif timeStr != "-":
     time = 0
   return int(time)
+
+# Parse file ccontaining default values for some queue attributes.
+# Return values as integer if they can be interpreted as a number.
+# FIXME: use a real parser like ConfigParser
+def parseDefaultsFile(filename):
+  try:
+    file = open(filename,'r')
+  except IOError:
+    abort_without_output("Error opening defaults file (%s)" % (filename))
+    
+  commented_line_pattern = re.compile(r'\s*#')
+  default_value_pattern = re.compile(r'^\s*(?P<kword>\w+)\s*=\s*(?P<value>\S*)')
+
+  defaults = {}
+  i = 0
+  for line in file:
+    i = i + 1
+    if not line.strip():
+      continue
+    if commented_line_pattern.match(line):
+      continue
+    matcher = default_value_pattern.match(line)
+    if not matcher:
+      logging.error("File %s: line %d invalid (%s)" % (filename,i,line.strip()))
+      debug(1,"File %s: line %d invalid (%s)" % (filename,i,line.strip()))
+      continue
+    try:
+      defaults[matcher.group('kword')] = int(matcher.group('value'))
+    except ValueError:
+      defaults[matcher.group('kword')] = matcher.group('value')
+    
+  return defaults
+    
 
 # note: this class works around the bug in the python logging
 # package fixed in patch #642974.  If the version of python-logging
@@ -94,14 +132,19 @@ stdrhdlr.setFormatter(fmt)
 
 # Initialize parser
 parser = OptionParser()
-parser.add_option('-l','--ce-ldif', dest='ce_ldif_file', action='store', default=None, help="LDIF file describing CE resources to update")
-parser.add_option('-s','--cluster-ldif', dest='cluster_ldif_file', default=None, action='store', help="LDIF file describing cluster resources to update")
+parser.add_option('--ce-ldif', dest='ce_ldif_file', action='store', default=None, help="LDIF file describing GLUE1 CE resources to update")
+parser.add_option('--cluster-ldif', dest='cluster_ldif_file', default=None, action='store', help="LDIF file describing GLUE1 cluster resources to update (DEPRECATED)")
+parser.add_option('--defaults', dest='defaults_file', default=None, action='store', help="File containing queue parameter defaults to use when not explicitly set")
 parser.add_option('-H','--host','--server', dest='hostname', default=None, action='store', help="Host name of Torque/MAUI server")
 parser.add_option('-v', '--debug', dest='verbosity', action='count', default=0, help='Increase verbosity level for debugging (on stderr)')
 parser.add_option('--diagnose-output', dest='diag_output', action='store', default=None, help='File containing a diagnose -r output. Be sure it is up-to-date.')
-parser.add_option('--flavor', dest='ce_flavor', default='all', action='store', help="CE flavor (lcg or cream or all)")
+# Flavor is kept for backward compatibility but is ignored
+parser.add_option('--flavor', dest='ce_flavor', default='all', action='store', help="CE flavor (cream or all)")
 parser.add_option('--max-normal-slots', dest='max_normal_slots', action='store', type="int", default=None, help="Maximum number of normal slots")
+parser.add_option('--share-ldif', dest='share_ldif_file', action='store', default=None, help="LDIF file describing GLUE2 share resources to update")
 parser.add_option('--version', dest='version', action='store_true', default=False, help='Display various information about this script')
+parser.add_option('--waiting-running-ratio', dest='max_waiting_running_ratio', action='store', type="int", default=max_waiting_running_def_ratio, \
+                                             help="Ratio between max number of waiting jobs and max number of running jobs (D: %d)" % (max_waiting_running_def_ratio))
 options, args = parser.parse_args()
 
 if options.verbosity:
@@ -112,9 +155,9 @@ if options.version:
   debug (0,__doc__)
   sys.exit(0)
 
-if not options.ce_ldif_file and not options.cluster_ldif_file:
+if not options.ce_ldif_file and not options.share_ldif_file and not options.cluster_ldif_file:
     parser.print_usage()
-    abort_without_output("Either option --ce-ldif or --cluster-ldif must be specified.")
+    abort_without_output("At least one of the options --ce-ldif, --share-ldif or --cluster-ldif must be specified.")
     
     
 if options.hostname:
@@ -123,46 +166,81 @@ else:
     schedhost = os.popen('hostname -f').readline().strip('\n')
     debug (1,"No scheduler host specified. Using default (%s)" % (schedhost))
 
-if options.ce_flavor and not re.match('all|cream|lcg',options.ce_flavor):
-  abort_without_output("Invalid value for --flavor option (%s): must be 'all', 'cream' or 'lcg'." % (options.ce_flavor))
+if options.ce_flavor and not re.match('all|cream',options.ce_flavor):
+  abort_without_output("Invalid value for deprecated --flavor option (%s): must be 'all' or 'cream'." % (options.ce_flavor))
 
 # Initializations
 
-ce_dn_to_queue = {}
+ce_dn_to_queue = {}               # GLUE1
+share_dn_to_queue = {}            # GLUE2
 subcluster_dn_list = []
 output = []
+queue_attrs= {}
 
+# Retrieve parameter defaults from file if --defaults specified
 
-# Retrieve CE DNs from static LDIF file
-        
-if options.ce_ldif_file:
-  try:
-    ce_ldif = open(options.ce_ldif_file,'r')
-  except IOError:
-    abort_without_output("Error opening config file " + options.ce_ldif_file)
-      
-  # gets the dns containing the keyword GlueVOViewLocalID or GlueCEUniqueID
-  # and put this dn in ce_dn_to_queue list.
-  # Regexp is not exactly the same for LCG and CREAM CE.
-  if options.ce_flavor == 'cream':
-    jobmanager_prefix = 'cream'
-    jobmanager_name = 'pbs'
-  elif options.ce_flavor == 'lcg':
-    jobmanager_prefix = 'jobmanager'
-    jobmanager_name = 'pbs|lcgpbs'
-  else:
-    jobmanager_prefix = 'jobmanager|cream'
-    jobmanager_name = 'pbs|lcgpbs'    
-  ceIDPattern = re.compile(r'^dn:\s+GlueCEUniqueID=[\w\-\.:]+/+(?:'+jobmanager_prefix+')-(?:'+jobmanager_name+')-(?P<queue>[\w\-\.]+),')
-  for line in ce_ldif:
-    matcher = ceIDPattern.match(line)
-    if matcher:
-      ce_dn_to_queue[line.strip('\n')] = matcher.group('queue')
-  ce_ldif.close()
-  debug (1,'Number of CE DN found in %s: %d' %(options.ce_ldif_file,len(ce_dn_to_queue)))
-
+if options.defaults_file:
+  queue_def_values = parseDefaultsFile(options.defaults_file)
 else:
-  debug (1,'No CE static LDIF file specified. Ignoring update of CE parameters')
+  queue_def_values = {}
+
+# Retrieve GLUE1 CE DNs and GLUEE2 share DNs from static LDIF files
+# Assume that both files are equivalent and can contain both GLUE1 and GLUE2 DNs.
+
+ldif_files = []
+if options.ce_ldif_file:
+  ldif_files.append(options.ce_ldif_file)
+if options.share_ldif_file:
+  ldif_files.append(options.share_ldif_file)
+  
+if len(ldif_files) == 0:
+  debug (1,'No CE or share static LDIF file specified. Ignoring update of CE parameters')
+
+# found_xxx_num are for debugging purpose
+found_ce_num = 0
+found_share_num = 0
+
+for file in ldif_files:
+  try:
+    static_ldif = open(file,'r')
+  except IOError:
+    abort_without_output("Error opening static LDIF file %s" % (file))
+      
+  jobmanager_prefix = 'cream'
+  jobmanager_name = 'pbs'
+  ceIDPattern = re.compile(r'^dn:\s+GlueCEUniqueID=[\w\-\.:]+/+(?:'+jobmanager_prefix+')-(?:'+jobmanager_name+')-(?P<queue>[\w\-\.]+),')
+  shareIDPattern = re.compile(r'^dn:\s+GLUE2ShareID=.*GLUE2GroupID=resource,o=glue')
+  shareQueuePattern = re.compile(r'^GLUE2ComputingShareMappingQueue:\s+(?P<queue>[\w\-\.]+)')
+  share_dn = None
+  
+  for line in static_ldif:
+    if share_dn:
+      # Look for line defining the associated queue
+      if line == '\n':
+        logging.error("GLUE2ComputingShareMappingQueue not found for share %s" % (share_dn))        
+      matcher_g2 = shareQueuePattern.match(line)
+      if matcher_g2:
+        share_dn_to_queue[share_dn] = matcher_g2.group('queue')
+        # Add queue to queue list, parameters will be retrieved later
+        queue_attrs[matcher_g2.group('queue')] = None
+        share_dn = None         
+    else:
+      matcher_g2 = shareIDPattern.match(line)
+      if matcher_g2:
+        share_dn = line.strip('\n')
+      else:
+        matcher_g1 = ceIDPattern.match(line)
+        if matcher_g1:
+          ce_dn_to_queue[line.strip('\n')] = matcher_g1.group('queue')
+          # Add queue to queue list, parameters will be retrieved later
+          queue_attrs[matcher_g1.group('queue')] = None         
+  static_ldif.close()
+  debug (1,'Number of GLUE1 CE DNs found in %s: %d' %(file,len(ce_dn_to_queue)-found_ce_num))
+  debug (1,'Number of GLUE2 share DNs found in %s: %d' %(file,len(share_dn_to_queue)-found_share_num))
+  found_ce_num = len(ce_dn_to_queue)
+  found_share_num = len(share_dn_to_queue)
+debug (1,'Total number of GLUE1 CE DNs found: %d' %(found_ce_num))
+debug (1,'Total number of GLUE2 share DNs found: %d' %(found_share_num))
 
 
 # Retrieving subcluster DNs from static LDIF file
@@ -189,142 +267,242 @@ else:
 torqueMauiConf = TorqueMauiConfParser(schedhost,verbosity=verbosity,diagOutputFile=options.diag_output)
 
 # From Torque, get Torque version, Total and Free CPUs
-torqueVersion = torqueMauiConf.getTorqueVersion()
-totalJobSlots = torqueMauiConf.getProcNum(activeOnly=True)
+torqueParams = {};
+torqueParams['torqueVersion'] = torqueMauiConf.getTorqueVersion()
+torqueParams['totalJobSlots'] = torqueMauiConf.getProcNum(activeOnly=True)
 
 #Get number of SDJ job slots configured, used (globally)
 SDJSlotsStats = torqueMauiConf.getQueueSDJSlots()
-totalSDJSlots = SDJSlotsStats['total']
-usedSDJSlots = SDJSlotsStats['used']
+torqueParams['totalSDJSlots'] = SDJSlotsStats['total']
+torqueParams['usedSDJSlots'] = SDJSlotsStats['used']
 
 #Get total number of used job slots (properly counting MPI jobs)
-totalUsedSlots = torqueMauiConf.getTotalUsedSlots()
+torqueParams['totalUsedSlots'] = torqueMauiConf.getTotalUsedSlots()
 
 # Compute the total number of slots for non-SDJ jobs and the amount used
-normalJobSlots = totalJobSlots - totalSDJSlots;
-if normalJobSlots < 0:
-  debug(1,'Number of slots for normal jobs (%d) negative. Reset to 0.' % normalJobSlots)
-  normalJobSlots = 0
-elif options.max_normal_slots and normalJobSlots > options.max_normal_slots:
-  debug(1,'Number of slots for normal jobs (%d) greater than the maximum number defined. Resetting to %d.' % (normalJobSlots,options.max_normal_slots))
-  normalJobSlots = options.max_normal_slots
+torqueParams['normalJobSlots'] = torqueParams['totalJobSlots'] - torqueParams['totalSDJSlots'];
+if torqueParams['normalJobSlots'] < 0:
+  debug(1,'Number of slots for normal jobs (%d) negative. Reset to 0.' % torqueParams['normalJobSlots'])
+  torqueParams['normalJobSlots'] = 0
+elif options.max_normal_slots and torqueParams['normalJobSlots'] > options.max_normal_slots:
+  debug(1,'Number of slots for normal jobs (%d) greater than the maximum number defined. Resetting to %d.' % (torqueParams['normalJobSlots'],options.max_normal_slots))
+  torqueParams['normalJobSlots'] = options.max_normal_slots
   
-freeNormalSlots = normalJobSlots - (totalUsedSlots - usedSDJSlots)
-if freeNormalSlots < 0:
-  debug(1,'Number of free slots for normal jobs negative (%d). Reset to 0.' % freeNormalSlots)
-  freeNormalSlots = 0
-elif freeNormalSlots > normalJobSlots:
-  debug(1,'Free slots for normal jobs (%d) > total slot number. Reset to %d.' % (freeNormalSlots,normalJobSlots))
-  freeNormalSlots = normalJobSlots
-usedNormalSlots = normalJobSlots - freeNormalSlots
+torqueParams['freeNormalSlots'] = torqueParams['normalJobSlots'] - (torqueParams['totalUsedSlots'] - torqueParams['usedSDJSlots'])
+if torqueParams['freeNormalSlots'] < 0:
+  debug(1,'Number of free slots for normal jobs negative (%d). Reset to 0.' % torqueParams['freeNormalSlots'])
+  torqueParams['freeNormalSlots'] = 0
+elif torqueParams['freeNormalSlots'] > torqueParams['normalJobSlots']:
+  debug(1,'Free slots for normal jobs (%d) > total slot number. Reset to %d.' % (torqueParams['freeNormalSlots'],torqueParams['normalJobSlots']))
+  torqueParams['freeNormalSlots'] = torqueParams['normalJobSlots']
+torqueParams['usedNormalSlots'] = torqueParams['normalJobSlots'] - torqueParams['freeNormalSlots']
 
 # Compute the total number of actually available job slots.
 # Will be the maximum number of available slots for any queue.
-totalFreeSlots = totalJobSlots - totalUsedSlots
-if totalFreeSlots < 0:
-  debug(1,'Total number of available slots negative (%d). Reset to 0.' % totalFreeSlots)
-  totalFreeSlots = 0
+torqueParams['totalFreeSlots'] = torqueParams['totalJobSlots'] - torqueParams['totalUsedSlots']
+if torqueParams['totalFreeSlots'] < 0:
+  debug(1,'Total number of available slots negative (%d). Reset to 0.' % torqueParams['totalFreeSlots'])
+  torqueParams['totalFreeSlots'] = 0
 
-debug(1,'Number of job slots on active nodes: normal=%d, SDJ=%d' %(normalJobSlots,totalSDJSlots))
-debug(1,'Number of used job slots on active nodes: %d (normal:%d, SDJ:%d)' %(totalUsedSlots,usedNormalSlots,usedSDJSlots))
-debug(1,'Number of available job slots (max for any queue with SDJ enabled): %d' %(totalFreeSlots))
+debug(1,'Number of job slots on active nodes: normal=%d, SDJ=%d' %(torqueParams['normalJobSlots'],torqueParams['totalSDJSlots']))
+debug(1,'Number of used job slots on active nodes: %d (normal:%d, SDJ:%d)' %(torqueParams['totalUsedSlots'],torqueParams['usedNormalSlots'],torqueParams['usedSDJSlots']))
+debug(1,'Number of available job slots (max for any queue with SDJ enabled): %d' %(torqueParams['totalFreeSlots']))
 
 
 # Build Glue information for each queue having an entry in the CE static LDIF file.
 # DN associated with a queue is in ce_dn_to_queue, retrieved for CE static LDIF file.
 
 if options.ce_ldif_file:
-  for dn in ce_dn_to_queue:
-    queue = ce_dn_to_queue[dn]
-    output.append(dn)
-
+  # First retrieve queue attributes for each queue exposed through a CE
+  for queue in queue_attrs:
     # Retrieve queue params. If the returned value is None, it means
     # the queue doesn't exist. In this case stop processing here for this queue.
-    queueParams = torqueMauiConf.getQueueParams(queue)
-#    if not queueParams:
-#      logging.error("Queue '%s' doesn't exist" % (queue))
-#      debug(1,"Queue '%s' doesn't exist" % (queue))
-#      continue
+    queue_attrs[queue] = torqueMauiConf.getQueueParams(queue)
+    if queue_attrs[queue] is None:
+      logging.error("Queue '%s' doesn't exist" % (queue))
+      debug(1,"Queue '%s' doesn't exist" % (queue))
+      continue
+    debug(1,"Queue %s attributes: %s" % (queue,queue_attrs[queue]))
 
     # Compute total/free CPUs (slots)
-    freeJobSlots = 0
-    queueSDJSlots = torqueMauiConf.getQueueSDJSlots(queue)    
-    queueTotalSlots = normalJobSlots + queueSDJSlots['total']
-    freeJobSlots = freeNormalSlots + queueSDJSlots['free']
-    if freeJobSlots < 0:
-      debug(1,'Number of free job slots negative (%d). Reset to 0.' % (freeJobSlots))
-      freeJobSlots = 0
-    elif freeJobSlots > totalFreeSlots:
-      debug(1,'Number of free slots in queue (%d) > total number of free slots. Reset to %d.' % (freeJobSlots,totalFreeSlots))
-      freeJobSlots = totalFreeSlots
+    queue_attrs[queue]['SDJSlots'] = torqueMauiConf.getQueueSDJSlots(queue)    
+    queue_attrs[queue]['TotalSlots'] = torqueParams['normalJobSlots'] + queue_attrs[queue]['SDJSlots']['total']
+    queue_attrs[queue]['freeJobSlots'] = torqueParams['freeNormalSlots'] + queue_attrs[queue]['SDJSlots']['free']
+    if queue_attrs[queue]['freeJobSlots'] < 0:
+      debug(1,'Number of free job slots negative (%d). Reset to 0.' % (queue_attrs[queue]['freeJobSlots']))
+      queue_attrs[queue]['freeJobSlots'] = 0
+    elif queue_attrs[queue]['freeJobSlots'] > torqueParams['totalFreeSlots']:
+      debug(1,'Number of free slots in queue (%d) > total number of free slots. Reset to %d.' % (queue_attrs[queue]['freeJobSlots'],torqueParams['totalFreeSlots']))
+      queue_attrs[queue]['freeJobSlots'] = torqueParams['totalFreeSlots']
       
-    output.append('GlueCEInfoLRMSVersion: '+torqueVersion)
-    # For historical reasons, there are 2 attributes representing total number of CPUs
-    output.append('GlueCEInfoTotalCPUs: '+str(queueTotalSlots))
-    output.append('GlueCEPolicyAssignedJobSlots: '+str(queueTotalSlots))
-    # For historical reasons, there are 2 attributes representing number of free slots
-    output.append('GlueCEStateFreeCPUs: '+str(freeJobSlots))
-    output.append('GlueCEStateFreeJobSlots: '+str(freeJobSlots))
-  
-    # Get the value of the following attributes:
-    # GlueCEPolicyMaxCPUTime, GlueCEPolicyMaxTotalJobs, GlueCEPolicyPriority, 
-    # GlueCEPolicyMaxRunningJobs, GlueCEPolicyMaxWallClockTime, GlueCEStateStatus
-
-    queueEnabled = 0
-    queueStarted = 0
-    MaxCPUTime = 0
-    MaxPCPUTime = 0
-    #queueParams = torqueMauiConf.getQueueParams(queue)
+    queueEnabled = False
+    queueStarted = False
+    maxCPUTime = 0
+    maxPCPUTime = 0
+    defaultCPUTime = 0
+    defaultPCPUTime = 0
     
-    # Simple resources
-    if 'max_queuable' in queueParams:
-      output.append('GlueCEPolicyMaxTotalJobs: %s' % (queueParams['max_queuable'][0]))
-    if 'Priority' in queueParams:
-      output.append('GlueCEPolicyPriority: %s' % (queueParams['Priority'][0]))
-    if 'max_running' in queueParams:
-      output.append('GlueCEPolicyMaxRunningJobs: %s' % (queueParams['max_running'][0]))
-    else:
-      output.append('GlueCEPolicyMaxRunningJobs: %s' % normalJobSlots)
-    if 'walltime' in queueParams['resources_max']:
-      output.append('GlueCEPolicyMaxWallClockTime: %d' % (convertHhMmSs(queueParams['resources_max']['walltime'][0])/60))
-
-    # For GlueCEPolicyMaxCPUTime, use Torque cput if pcput (per process limit) is not set or > cput.
+    # For MaxCPUTime, use Torque cput if pcput (per process limit) is not set or > cput.
     # Else use pcput (real limit for single process jobs, not very meaningful anyway for MPI jobs).
     # If none are defined, keep the default value (don't redefine here).
-    if 'cput' in queueParams['resources_max']:
-    	MaxCPUTime = convertHhMmSs(queueParams['resources_max']['cput'][0])
-    if 'pcput' in queueParams['resources_max']:
-    	MaxPCPUTime = convertHhMmSs(queueParams['resources_max']['pcput'][0])
-    if (MaxCPUTime > 0) and ((MaxPCPUTime == 0) or (MaxCPUTime < MaxPCPUTime)):
-      output.append('GlueCEPolicyMaxCPUTime: %d' % (MaxCPUTime/60))
-    elif (MaxPCPUTime > 0):
-      output.append('GlueCEPolicyMaxCPUTime: %d' % (MaxPCPUTime/60))
 
-    # Set GlueCEStateStatus according to 'enabled' and 'started'
-    if 'enabled' in queueParams and (queueParams['enabled'][0].lower() == 'true'):
-    	queueEnabled = True
-    else:
-    	queueEnabled = False
-    if 'started' in queueParams and (queueParams['started'][0].lower() == 'true'):
-    	queueStarted = True
-    else:
-    	queueStarted = False
-    if queueEnabled == 1 and queueStarted == 1:
-      queueStatus = 'Production'
-    elif queueEnabled == 1:
-      queueStatus = 'Queueing'
-    elif queueStarted == 1:
-      queueStatus = 'Draining'
-    else:
-      queueStatus = 'Closed'
-    output.append('GlueCEStateStatus: %s' % (queueStatus))
+    if 'cput' in queue_attrs[queue]['resources_max']:
+      maxCPUTime = convertHhMmSs(queue_attrs[queue]['resources_max']['cput'][0])
+    if 'pcput' in queue_attrs[queue]['resources_max']:
+      maxPCPUTime = convertHhMmSs(queue_attrs[queue]['resources_max']['pcput'][0])
+    if (maxCPUTime > 0) and ((maxPCPUTime == 0) or (maxCPUTime < maxPCPUTime)):
+      queue_attrs[queue]['MaxCPUTime'] = maxCPUTime
+    elif maxPCPUTime > 0:
+      queue_attrs[queue]['MaxCPUTime'] = maxPCPUTime
 
+    if 'cput' in queue_attrs[queue]['resources_default']:
+      defaultCPUTime = convertHhMmSs(queue_attrs[queue]['resources_default']['cput'][0])
+    if 'pcput' in queue_attrs[queue]['resources_default']:
+      defaultPCPUTime = convertHhMmSs(queue_attrs[queue]['resources_default']['pcput'][0])
+    if (defaultCPUTime > 0) and ((defaultPCPUTime == 0) or (defaultCPUTime < defaultPCPUTime)):
+      queue_attrs[queue]['defaultCPUTime'] = defaultCPUTime
+    elif defaultPCPUTime > 0:
+      queue_attrs[queue]['defaultCPUTime'] = defaultPCPUTime
+
+    # Compute max running jobs, max waiting jobs and max total jobs based on queue configuration
+    if 'max_running' in queue_attrs[queue]:
+      queue_attrs[queue]['MaxRunningJobs'] = queue_attrs[queue]['max_running'][0]
+    else:
+      queue_attrs[queue]['MaxRunningJobs'] = queue_attrs[queue]['TotalSlots']
+    if 'max_queuable' in queue_attrs[queue]:
+      queue_attrs[queue]['MaxWaitingJobs'] = queue_attrs[queue]['max_queuable'][0] - queue_attrs[queue]['MaxRunningJobs']
+      if queue_attrs[queue]['MaxWaitingJobs'] < 0:
+        debug(1,"Queue %s: negative MaxWaitingJobs (%d) reset to 0" % (queue,queue_attrs[queue]['MaxWaitingJobs']))
+        queue_attrs[queue]['MaxWaitingJobs'] = 0
+      queue_attrs[queue]['MaxTotalJobs'] = queue_attrs[queue]['max_queuable'][0]
+    else:
+      queue_attrs[queue]['MaxWaitingJobs'] = options.max_waiting_running_ratio * queue_attrs[queue]['MaxRunningJobs']
+      queue_attrs[queue]['MaxTotalJobs'] = queue_attrs[queue]['MaxRunningJobs'] + queue_attrs[queue]['MaxWaitingJobs']
+
+    # Define various other attributes based on queueu configuration or default values
+    if 'Priority' in queue_attrs[queue]:
+      queue_attrs[queue]['PolicyPriority'] = queue_attrs[queue]['Priority'][0]
+
+    if 'walltime' in queue_attrs[queue]['resources_default']:
+      queue_attrs[queue]['DefaultWallTime'] = queue_attrs[queue]['resources_default']['walltime'][0]
+    if 'walltime' in queue_attrs[queue]['resources_max']:
+      queue_attrs[queue]['MaxWallTime'] = queue_attrs[queue]['resources_max']['walltime'][0]
+
+    if 'mem' in queue_attrs[queue]['resources_default']:
+      queue_attrs[queue]['DefaultPhysMem'] = queue_attrs[queue]['resources_default']['mem'][0]
+    elif 'DefaultPhysicalMemory' in queue_def_values:
+      queue_attrs[queue]['DefaultPhysMem'] = queue_def_values['DefaultPhysicalMemory']
+    if 'mem' in queue_attrs[queue]['resources_max']:
+      queue_attrs[queue]['MaxPhysMem'] = queue_attrs[queue]['resources_max']['mem'][0]
+    elif 'MaxPhysicalMemory' in queue_def_values:
+      queue_attrs[queue]['MaxPhysMem'] = queue_def_values['MaxPhysicalMemory']
+
+    if 'vmem' in queue_attrs[queue]['resources_default']:
+      queue_attrs[queue]['DefaultVirtMem'] = queue_attrs[queue]['resources_default']['vmem'][0]
+    elif 'DefaultVirtualMemory' in queue_def_values:
+      queue_attrs[queue]['DefaultVirtMem'] = queue_def_values['DefaultVirtualMemory']
+    if 'vmem' in queue_attrs[queue]['resources_max']:
+      queue_attrs[queue]['MaxVirtMem'] = queue_attrs[queue]['resources_max']['vmem'][0]
+    elif 'MaxVirtualMemory' in queue_def_values:
+      queue_attrs[queue]['MaxVirtMem'] = queue_def_values['MaxVirtualMemory']
+
+    if 'procct' in queue_attrs[queue]['resources_default']:
+      queue_attrs[queue]['DefaultProcsPerJob'] = queue_attrs[queue]['resources_default']['procct'][0]
+    elif 'DefaultProcessorsPerJob' in queue_def_values:
+      queue_attrs[queue]['DefaultProcsPerJob'] = queue_def_values['DefaultProcessorsPerJob']
+    if 'procct' in queue_attrs[queue]['resources_max']:
+      queue_attrs[queue]['MaxProcsPerJob'] = queue_attrs[queue]['resources_max']['procct'][0]
+    elif 'MaxProcessorsPerJob' in queue_def_values:
+      queue_attrs[queue]['MaxProcsPerJob'] = queue_def_values['MaxProcessorsPerJob']
+    
+    # Define status according to 'enabled' and 'started'
+    if 'enabled' in queue_attrs[queue] and (queue_attrs[queue]['enabled'][0].lower() == 'true'):
+      queueEnabled = True
+    else:
+      queueEnabled = False
+    if 'started' in queue_attrs[queue] and (queue_attrs[queue]['started'][0].lower() == 'true'):
+      queueStarted = True
+    else:
+      queueStarted = False
+    if queueEnabled and queueStarted:
+      queue_attrs[queue]['Status'] = 'Production'
+    elif queueEnabled:
+      queue_attrs[queue]['Status'] = 'Queueing'
+    elif queueStarted:
+      queue_attrs[queue]['Status'] = 'Draining'
+    else:
+      queue_attrs[queue]['Status'] = 'Closed'
+
+
+  # GLUE1 output
+
+  for dn in ce_dn_to_queue:
+    queue = ce_dn_to_queue[dn]
+    if queue_attrs[queue] is None:
+      logging.error("Skipping GLUE1 GlueCE %s: matching queue (%s) attributes not retrieved" % (dn,queue))
+      debug(1,"Skipping GLUE1 GlueCE %s: matching queue (%s) attributes not retrieved" % (dn,queue))
+      continue
+    output.append(dn)
+    output.append('GlueCEInfoLRMSVersion: '+torqueParams['torqueVersion'])
+    # For historical reasons, there are 2 attributes representing total number of CPUs
+    output.append('GlueCEInfoTotalCPUs: '+str(queue_attrs[queue]['TotalSlots']))
+    output.append('GlueCEPolicyAssignedJobSlots: '+str(queue_attrs[queue]['TotalSlots']))
+    # For historical reasons, there are 2 attributes representing number of free slots
+    output.append('GlueCEStateFreeCPUs: '+str(queue_attrs[queue]['freeJobSlots']))
+    output.append('GlueCEStateFreeJobSlots: '+str(queue_attrs[queue]['freeJobSlots']))
+    if 'max_queuable' in queue_attrs[queue]:
+      output.append('GlueCEPolicyMaxTotalJobs: %s' % (queue_attrs[queue]['MaxTotalJobs']))
+    if 'Priority' in queue_attrs[queue]:
+      output.append('GlueCEPolicyPriority: %s' % (queue_attrs[queue]['PolicyPriority']))
+    if 'max_running' in queue_attrs[queue]:
+      output.append('GlueCEPolicyMaxRunningJobs: %s' % (queue_attrs[queue]['MaxRunningJobs']))
+    else:
+      output.append('GlueCEPolicyMaxRunningJobs: %s' % torqueParams['normalJobSlots'])
+    if 'walltime' in queue_attrs[queue]['resources_max']:
+      output.append('GlueCEPolicyMaxWallClockTime: %d' % (convertHhMmSs(queue_attrs[queue]['MaxWallTime'])/60))
+    if 'MaxCPUTime' in queue_attrs[queue]:
+      output.append('GlueCEPolicyMaxCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
+    output.append('GlueCEStateStatus: %s' % (queue_attrs[queue]['Status']))
+    # End DN attributes by an empty line
+    output.append('\n')
+
+  # GLUE2 output
+
+  for dn in share_dn_to_queue:
+    queue = share_dn_to_queue[dn]
+    if queue_attrs[queue] is None:
+      logging.error("Skipping GLUE2 share %s: matching queue (%s) attributes not retrieved" % (dn,queue))
+      debug(1,"Skipping GLUE2 share %s: matching queue (%s) attributes not retrieved" % (dn,queue))
+      continue
+    output.append(dn)
+    output.append('GLUE2ComputingShareFreeSlots: %s' % queue_attrs[queue]['freeJobSlots'])
+    output.append('GLUE2ComputingShareMaxRunningJobs: %d' % queue_attrs[queue]['MaxRunningJobs'])
+    output.append('GLUE2ComputingShareMaxWaitingJobs: %d' % queue_attrs[queue]['MaxWaitingJobs'])
+    output.append('GLUE2ComputingShareMaxTotalJobs: %d' % queue_attrs[queue]['MaxTotalJobs'])
+    output.append('GLUE2ComputingShareServingState: %s' % queue_attrs[queue]['Status'])
+    output.append('GLUE2EntityCreationTime: %s' % now)
+    if 'MaxWallTime' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxWallTime: %d' % (convertHhMmSs(queue_attrs[queue]['MaxWallTime'])/60))
+    if 'DefaultWallTime' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareDefaultWallTime: %d' % (convertHhMmSs(queue_attrs[queue]['DefaultWallTime'])/60))
+    if 'MaxCPUTime' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
+    if 'DefaultCPUTime' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareDefaultCPUTime: %d' % (queue_attrs[queue]['DefaultCPUTime']/60))
+    elif 'MaxCPUTime' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareDefaultCPUTime: %d' % (queue_attrs[queue]['MaxCPUTime']/60))
+    if 'MaxProcsPerJob' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxSlotsPerJob: %d' % queue_attrs[queue]['MaxProcsPerJob'])
+    if 'MaxPhysMem' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxMainMemory: %d' % queue_attrs[queue]['MaxPhysMem'])
+    if 'MaxVirtMem' in queue_attrs[queue]:
+      output.append('GLUE2ComputingShareMaxVirtualMemory: %d' % queue_attrs[queue]['MaxVirtMem'])
     # End DN attributes by an empty line
     output.append('\n')
 
 
-# Update SubCluster logical CPUs
-# This part is maintained for backward compatibility but is not compliant
+# Update SubCluster logical CPUs if cluster_ldif_file has been specified.
+# REPRECATED: this part is maintained for backward compatibility but is not compliant
 # with the agreement that GlueSubClusterLogicalCPUs is a static value representing
 # the number of cores configured (and not active) in the cluster.
 # It is also not able to cope with multiple homogeneous subclusters in a cluster.
@@ -332,7 +510,7 @@ if options.ce_ldif_file:
 if options.cluster_ldif_file:
   for dn in subcluster_dn_list:
     output.append(dn)
-    output.append('GlueSubClusterLogicalCPUs: '+str(normalJobSlots))
+    output.append('GlueSubClusterLogicalCPUs: '+str(torqueParams['normalJobSlots']))
     output.append('\n')
 
 
