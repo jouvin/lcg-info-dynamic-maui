@@ -6,7 +6,7 @@ This plugin is an alternative to the old PBS-based GIP plugin. It takes into acc
 specific MAUI features like standing reservations.
 """
 
-__version__ = "2.2.0-2"
+__version__ = "2.2.0-3"
 __author__  = "Michel Jouvin <jouvin@lal.in2p3.fr>, Cedric Duprilot <duprilot@lal.in2p3.fr>"
 
 
@@ -345,6 +345,7 @@ if options.ce_ldif_file:
     # For MaxCPUTime, use Torque cput if pcput (per process limit) is not set or > cput.
     # Else use pcput (real limit for single process jobs, not very meaningful anyway for MPI jobs).
     # If none are defined, keep the default value (don't redefine here).
+    # Most attributes are returned as strings even though they are numbers...
 
     if 'cput' in queue_attrs[queue]['resources_max']:
       maxCPUTime = convertHhMmSs(queue_attrs[queue]['resources_max']['cput'][0])
@@ -366,22 +367,22 @@ if options.ce_ldif_file:
 
     # Compute max running jobs, max waiting jobs and max total jobs based on queue configuration
     if 'max_running' in queue_attrs[queue]:
-      queue_attrs[queue]['MaxRunningJobs'] = queue_attrs[queue]['max_running'][0]
+      queue_attrs[queue]['MaxRunningJobs'] = int(queue_attrs[queue]['max_running'][0])
     else:
       queue_attrs[queue]['MaxRunningJobs'] = queue_attrs[queue]['TotalSlots']
     if 'max_queuable' in queue_attrs[queue]:
-      queue_attrs[queue]['MaxWaitingJobs'] = queue_attrs[queue]['max_queuable'][0] - queue_attrs[queue]['MaxRunningJobs']
+      queue_attrs[queue]['MaxWaitingJobs'] = int(queue_attrs[queue]['max_queuable'][0]) - queue_attrs[queue]['MaxRunningJobs']
       if queue_attrs[queue]['MaxWaitingJobs'] < 0:
         debug(1,"Queue %s: negative MaxWaitingJobs (%d) reset to 0" % (queue,queue_attrs[queue]['MaxWaitingJobs']))
         queue_attrs[queue]['MaxWaitingJobs'] = 0
-      queue_attrs[queue]['MaxTotalJobs'] = queue_attrs[queue]['max_queuable'][0]
+      queue_attrs[queue]['MaxTotalJobs'] = int(queue_attrs[queue]['max_queuable'][0])
     else:
       queue_attrs[queue]['MaxWaitingJobs'] = options.max_waiting_running_ratio * queue_attrs[queue]['MaxRunningJobs']
       queue_attrs[queue]['MaxTotalJobs'] = queue_attrs[queue]['MaxRunningJobs'] + queue_attrs[queue]['MaxWaitingJobs']
 
     # Define various other attributes based on queueu configuration or default values
     if 'Priority' in queue_attrs[queue]:
-      queue_attrs[queue]['PolicyPriority'] = queue_attrs[queue]['Priority'][0]
+      queue_attrs[queue]['PolicyPriority'] = int(queue_attrs[queue]['Priority'][0])
 
     if 'walltime' in queue_attrs[queue]['resources_default']:
       queue_attrs[queue]['DefaultWallTime'] = queue_attrs[queue]['resources_default']['walltime'][0]
@@ -389,29 +390,29 @@ if options.ce_ldif_file:
       queue_attrs[queue]['MaxWallTime'] = queue_attrs[queue]['resources_max']['walltime'][0]
 
     if 'mem' in queue_attrs[queue]['resources_default']:
-      queue_attrs[queue]['DefaultPhysMem'] = queue_attrs[queue]['resources_default']['mem'][0]
+      queue_attrs[queue]['DefaultPhysMem'] = int(queue_attrs[queue]['resources_default']['mem'][0])
     elif 'DefaultPhysicalMemory' in queue_def_values:
       queue_attrs[queue]['DefaultPhysMem'] = queue_def_values['DefaultPhysicalMemory']
     if 'mem' in queue_attrs[queue]['resources_max']:
-      queue_attrs[queue]['MaxPhysMem'] = queue_attrs[queue]['resources_max']['mem'][0]
+      queue_attrs[queue]['MaxPhysMem'] = int(queue_attrs[queue]['resources_max']['mem'][0])
     elif 'MaxPhysicalMemory' in queue_def_values:
       queue_attrs[queue]['MaxPhysMem'] = queue_def_values['MaxPhysicalMemory']
 
     if 'vmem' in queue_attrs[queue]['resources_default']:
-      queue_attrs[queue]['DefaultVirtMem'] = queue_attrs[queue]['resources_default']['vmem'][0]
+      queue_attrs[queue]['DefaultVirtMem'] = int(queue_attrs[queue]['resources_default']['vmem'][0])
     elif 'DefaultVirtualMemory' in queue_def_values:
       queue_attrs[queue]['DefaultVirtMem'] = queue_def_values['DefaultVirtualMemory']
     if 'vmem' in queue_attrs[queue]['resources_max']:
-      queue_attrs[queue]['MaxVirtMem'] = queue_attrs[queue]['resources_max']['vmem'][0]
+      queue_attrs[queue]['MaxVirtMem'] = int(queue_attrs[queue]['resources_max']['vmem'][0])
     elif 'MaxVirtualMemory' in queue_def_values:
       queue_attrs[queue]['MaxVirtMem'] = queue_def_values['MaxVirtualMemory']
 
     if 'procct' in queue_attrs[queue]['resources_default']:
-      queue_attrs[queue]['DefaultProcsPerJob'] = queue_attrs[queue]['resources_default']['procct'][0]
+      queue_attrs[queue]['DefaultProcsPerJob'] = int(queue_attrs[queue]['resources_default']['procct'][0])
     elif 'DefaultProcessorsPerJob' in queue_def_values:
       queue_attrs[queue]['DefaultProcsPerJob'] = queue_def_values['DefaultProcessorsPerJob']
     if 'procct' in queue_attrs[queue]['resources_max']:
-      queue_attrs[queue]['MaxProcsPerJob'] = queue_attrs[queue]['resources_max']['procct'][0]
+      queue_attrs[queue]['MaxProcsPerJob'] = int(queue_attrs[queue]['resources_max']['procct'][0])
     elif 'MaxProcessorsPerJob' in queue_def_values:
       queue_attrs[queue]['MaxProcsPerJob'] = queue_def_values['MaxProcessorsPerJob']
     
